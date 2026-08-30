@@ -1,0 +1,146 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-app
+  namespace: production
+  labels:
+    app: web-app
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: web-app
+  template:
+    metadata:
+      labels:
+        app: web-app
+        version: "v2.1.0"
+    spec:
+      serviceAccountName: web-app-sa
+      containers:
+        - name: web
+          image: myorg/web-app:v2.1.0
+          workingDir: /app
+          env:
+            - name: ENVIRONMENT
+              value: "production"
+            - name: LOG_LEVEL
+              value: "info"
+            - name: DATABASE_URL
+              value: "postgres://prod-db:5432/app"
+            - name: FEATURE_NEW_UI
+              value: "true"
+            - name: MAX_CONNECTIONS
+              value: "100"
+          envFrom:
+            - configMapRef:
+                name: web-app-config
+            - secretRef:
+                name: web-app-secrets
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: config
+              mountPath: /etc/web-app/config
+              readOnly: true
+        - name: sidecar
+          image: myorg/log-sidecar:v1.2.0
+          workingDir: /
+          env:
+            - name: LOG_DESTINATION
+              value: "elasticsearch"
+            - name: LOG_LEVEL
+              value: "debug"
+          command: ["/sidecar"]
+          args: ["--config", "/etc/sidecar/config.yaml"]
+      volumes:
+        - name: config
+          configMap:
+            name: web-app-config
+        - name: secrets
+          secret:
+            secretName: web-app-secrets
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: web-app-config
+  namespace: production
+data:
+  config.yaml: |
+    server:
+      port: 8080
+      timeout: 30s
+    feature_flags:
+      new_ui: true
+      beta_api: false
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: web-app-secrets
+  namespace: production
+type: Opaque
+stringData:
+  api_key: "sk_live_abc123"
+  db_password: "prod_password_123"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-service
+  namespace: production
+  labels:
+    app: api-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: api-service
+  template:
+    metadata:
+      labels:
+        app: api-service
+        version: "v1.5.3"
+    spec:
+      serviceAccountName: api-sa
+      containers:
+        - name: api
+          image: myorg/api-service:v1.5.3
+          workingDir: /app
+          env:
+            - name: ENVIRONMENT
+              value: "production"
+            - name: LOG_LEVEL
+              value: "warn"
+            - name: DATABASE_URL
+              value: "postgres://prod-db:5432/api"
+            - name: CACHE_TTL
+              value: "300"
+            - name: RATE_LIMIT
+              value: "1000"
+          envFrom:
+            - configMapRef:
+                name: api-config
+            - secretRef:
+                name: api-secrets
+          ports:
+            - containerPort: 8000
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: api-config
+  namespace: production
+data:
+  settings.json: '{"rate_limit": 1000, "cache_ttl": 300, "timeout": "5s"}'
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: api-secrets
+  namespace: production
+type: Opaque
+stringData:
+  jwt_secret: "super_secret_jwt_key"
+  encryption_key: "enc_key_456"
